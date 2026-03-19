@@ -33,11 +33,11 @@ bottleneck:
   extraction_layer: -1           # which transformer layer to tap (-1 = last)
 
 ttt:
-  num_update_steps: 3            # N gradient steps at test time
-  learning_rate: 1.0e-4          # α for fast weight updates
+  num_update_steps: 100           # Number of TTT gradient descent steps
+  learning_rate: 5.0e-4          # α for fast weight updates
   optimizer: "adam"              # "adam" or "sgd"
   gradient_clip_norm: 1.0
-  lambda_sym: 10.0               # Weight for the symbolic hinge loss
+  lambda_sym: 50.0               # Weight for the symbolic hinge loss
   epsilon: 0.01                  # Hinge loss margin
 
 symbolic:
