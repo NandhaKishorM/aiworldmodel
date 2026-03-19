@@ -37,9 +37,8 @@ ttt:
   learning_rate: 1.0e-4          # α for fast weight updates
   optimizer: "adam"              # "adam" or "sgd"
   gradient_clip_norm: 1.0
-  lambda_sym: 0.5               # weight for symbolic loss
-  epsilon: 0.01                  # hinge loss margin
-  mask_ratio: 0.15              # fraction of tokens masked for self-supervised loss
+  lambda_sym: 10.0               # Weight for the symbolic hinge loss
+  epsilon: 0.01                  # Hinge loss margin
 
 symbolic:
   default_rules:

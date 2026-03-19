@@ -38,20 +38,15 @@ class TTTLossResult:
 
 class SelfSupervisedLoss(nn.Module):
     """
-    Self-supervised loss via random token masking.
+    Self-supervised loss via standard Causal Language Modeling (CLM).
 
-    Randomly masks a fraction of input tokens and computes cross-entropy
-    between the model's predictions at masked positions and the original
-    tokens. No external labels required — the input IS the label.
+    Predicts the next token using standard cross-entropy on the input sequence.
+    This provides a completely stable gradient target across TTT steps,
+    unlike random masking which causes loss to bounce wildly.
     """
 
-    def __init__(
-        self,
-        mask_ratio: float = 0.15,
-        ignore_index: int = -100,
-    ) -> None:
+    def __init__(self, ignore_index: int = -100) -> None:
         super().__init__()
-        self.mask_ratio = mask_ratio
         self.ignore_index = ignore_index
 
     def forward(
@@ -59,38 +54,25 @@ class SelfSupervisedLoss(nn.Module):
         logits: torch.Tensor,
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
-        mask_indices: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, int]:
         """
-        Compute masked self-supervised loss.
-
-        Parameters
-        ----------
-        logits      : (batch, seq_len, vocab_size) model output logits
-        input_ids   : (batch, seq_len) original token IDs
-        attention_mask : (batch, seq_len) which tokens to consider
-        mask_indices : pre-computed mask (if None, randomly generated)
+        Compute standard auto-regressive loss.
 
         Returns
         -------
-        (loss_scalar, num_masked_tokens)
+        (loss_scalar, num_valid_tokens)
         """
         batch_size, seq_len, vocab_size = logits.shape
-
-        if mask_indices is None:
-            mask_indices = self._generate_mask(
-                batch_size, seq_len, attention_mask, logits.device
-            )
 
         # Shift for next-token prediction alignment:
         # logits[t] predicts token at position t+1
         shift_logits = logits[:, :-1, :].contiguous()
         shift_labels = input_ids[:, 1:].contiguous()
-        shift_mask = mask_indices[:, 1:].contiguous()
 
-        # Apply mask: only compute loss on masked positions
         labels = shift_labels.clone()
-        labels[~shift_mask] = self.ignore_index
+        if attention_mask is not None:
+            shift_mask = attention_mask[:, 1:].contiguous()
+            labels[~shift_mask.bool()] = self.ignore_index
 
         loss = F.cross_entropy(
             shift_logits.view(-1, vocab_size),
@@ -99,33 +81,8 @@ class SelfSupervisedLoss(nn.Module):
             reduction="mean",
         )
 
-        num_masked = shift_mask.sum().item()
-        return loss, int(num_masked)
-
-    def _generate_mask(
-        self,
-        batch_size: int,
-        seq_len: int,
-        attention_mask: Optional[torch.Tensor],
-        device: torch.device,
-    ) -> torch.Tensor:
-        """Generate random boolean mask for token positions."""
-        mask = torch.rand(batch_size, seq_len, device=device) < self.mask_ratio
-
-        # Don't mask padding or special tokens
-        if attention_mask is not None:
-            mask = mask & attention_mask.bool()
-
-        # Ensure at least 1 token is masked
-        if mask.sum() == 0:
-            valid = attention_mask.bool() if attention_mask is not None else \
-                torch.ones(batch_size, seq_len, dtype=torch.bool, device=device)
-            valid_positions = valid.nonzero(as_tuple=False)
-            if len(valid_positions) > 0:
-                idx = valid_positions[0]
-                mask[idx[0], idx[1]] = True
-
-        return mask
+        num_valid = (labels != self.ignore_index).sum().item()
+        return loss, int(num_valid)
 
 
 class SymbolicConsistencyLoss(nn.Module):
@@ -180,13 +137,12 @@ class TTTLoss(nn.Module):
     def __init__(
         self,
         constraint_engine: ConstraintEngine,
-        lambda_sym: float = 0.5,
-        mask_ratio: float = 0.15,
+        lambda_sym: float = 10.0,
     ) -> None:
         super().__init__()
         self.lambda_sym = lambda_sym
 
-        self.self_sup_loss = SelfSupervisedLoss(mask_ratio=mask_ratio)
+        self.self_sup_loss = SelfSupervisedLoss()
         self.symbolic_loss = SymbolicConsistencyLoss(constraint_engine)
 
     def forward(

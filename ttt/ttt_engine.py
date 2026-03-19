@@ -92,8 +92,7 @@ class TTTEngine:
 
         ttt_cfg = config.get("ttt", {})
         self.num_update_steps = ttt_cfg.get("num_update_steps", 3)
-        self.lambda_sym = ttt_cfg.get("lambda_sym", 0.5)
-        self.mask_ratio = ttt_cfg.get("mask_ratio", 0.15)
+        self.lambda_sym = ttt_cfg.get("lambda_sym", 10.0)
         self.learning_rate = ttt_cfg.get("learning_rate", 1e-4)
         self.optimizer_type = ttt_cfg.get("optimizer", "adam")
         self.gradient_clip_norm = ttt_cfg.get("gradient_clip_norm", 1.0)
@@ -105,7 +104,6 @@ class TTTEngine:
         self.ttt_loss_fn = TTTLoss(
             constraint_engine=constraint_engine,
             lambda_sym=self.lambda_sym,
-            mask_ratio=self.mask_ratio,
         )
 
         # Device

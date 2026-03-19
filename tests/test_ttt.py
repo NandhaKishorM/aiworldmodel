@@ -135,16 +135,16 @@ class TestLoRAInjector:
 class TestSelfSupervisedLoss:
 
     def test_output_shape(self):
-        loss_fn = SelfSupervisedLoss(mask_ratio=0.3)
+        loss_fn = SelfSupervisedLoss()
         logits = torch.randn(1, 20, 100)  # (batch, seq, vocab)
         input_ids = torch.randint(0, 100, (1, 20))
-        loss, num_masked = loss_fn(logits, input_ids)
+        loss, num_valid = loss_fn(logits, input_ids)
 
         assert loss.dim() == 0  # scalar
-        assert num_masked > 0
+        assert num_valid > 0
 
     def test_differentiable(self):
-        loss_fn = SelfSupervisedLoss(mask_ratio=0.5)
+        loss_fn = SelfSupervisedLoss()
         logits = torch.randn(1, 20, 100, requires_grad=True)
         input_ids = torch.randint(0, 100, (1, 20))
         loss, _ = loss_fn(logits, input_ids)
@@ -179,8 +179,7 @@ class TestTTTLoss:
 
         ttt_loss = TTTLoss(
             constraint_engine=ce,
-            lambda_sym=0.5,
-            mask_ratio=0.15,
+            lambda_sym=10.0,
         )
 
         proj = GumbelSoftmaxProjection(num_concepts=4, hidden_dim=32)

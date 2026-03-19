@@ -138,8 +138,7 @@ class TestTTTEngineIntegration:
             "ttt": {
                 "num_update_steps": 2,
                 "learning_rate": 1e-3,
-                "lambda_sym": 0.5,
-                "mask_ratio": 0.15,
+                "lambda_sym": 10.0,
                 "optimizer": "adam",
                 "gradient_clip_norm": 1.0,
             },
