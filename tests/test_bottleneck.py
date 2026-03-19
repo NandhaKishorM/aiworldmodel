@@ -136,21 +136,25 @@ class TestGumbelSoftmaxProjection:
         assert projection.tau == 1.0
 
     def test_low_temperature_approaches_one_hot(self):
-        """As τ→0, output should be sharper (lower entropy)."""
+        """As τ→0, soft_z output should be sharper (lower entropy)."""
         proj = GumbelSoftmaxProjection(
             num_concepts=64, hidden_dim=128, tau_start=1.0, tau_min=0.01
         )
+        torch.manual_seed(42)
         h = torch.randn(1, 5, 128)
 
-        # High temperature → higher entropy
+        # Compute entropy directly from soft_z (reflects temperature)
+        torch.manual_seed(0)
         result_high = proj(h, tau=5.0)
-        entropy_high = result_high.entropy.mean()
+        sz_high = result_high.soft_z
+        ent_high = -(sz_high * (sz_high + 1e-10).log()).sum(dim=-1).mean()
 
-        # Low temperature → lower entropy
+        torch.manual_seed(0)
         result_low = proj(h, tau=0.01)
-        entropy_low = result_low.entropy.mean()
+        sz_low = result_low.soft_z
+        ent_low = -(sz_low * (sz_low + 1e-10).log()).sum(dim=-1).mean()
 
-        assert entropy_low < entropy_high
+        assert ent_low < ent_high
 
     def test_concept_utilization(self, projection):
         h = torch.randn(1, 100, 128)
