@@ -14,7 +14,7 @@ model:
   max_position_embeddings: 8192
 
 lora:
-  rank: 16
+  rank: 512
   alpha: 32
   target_modules:
     - "q_proj"
