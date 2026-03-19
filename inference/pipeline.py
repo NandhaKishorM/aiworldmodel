@@ -317,69 +317,141 @@ class NeuroSymbolicTTTPipeline:
             final_adapter_norm=0.0,
         )
 
-    def inject_facts(self, facts: List[str], epochs: int = 3) -> None:
+    def inject_facts(self, facts: List[str], epochs: int = 3, use_ogp: bool = False) -> None:
         """
         Inject a list of facts directly into the persistent parametric memory (LoRA).
-        This bypasses inference generation and purely runs the TTT objective over the facts.
+        If use_ogp is True, learns facts sequentially and uses Orthogonal Gradient 
+        Projection to strictly prevent catastrophic forgetting/cross-contamination.
         """
         assert self._initialized, "Call .initialize() first"
         
-        logger.info(f"Injecting {len(facts)} facts into parametric memory over {epochs} epochs...")
+        logger.info(f"Injecting {len(facts)} facts over {epochs} epochs (OGP={use_ogp})...")
         
-        # Build optimizer for adapter params only
-        adapter_params = self.lora_injector.get_parameters()
+        adapter_params = list(self.lora_injector.get_parameters())
         for p in adapter_params:
             p.requires_grad_(True)
             
         from ttt.optimizer import FastWeightOptimizer
-        optimizer = FastWeightOptimizer(
-            parameters=adapter_params,
-            optimizer_type=self.ttt_engine.optimizer_type,
-            learning_rate=self.ttt_engine.learning_rate,
-            gradient_clip_norm=self.ttt_engine.gradient_clip_norm,
-        )
         
         self.ttt_engine.model.eval()
         self.bottleneck.train()
         
-        for epoch in range(epochs):
-            total_loss = 0.0
+        if use_ogp:
+            subspaces = {id(p): [] for p in adapter_params}
+            
             for i, fact in enumerate(facts):
-                # Tokenize exactly as we would for normal inference/TTT
-                inputs = self._tokenize(fact)
-                input_ids = inputs["input_ids"].to(self.ttt_engine.device)
-                attention_mask = inputs["attention_mask"].to(self.ttt_engine.device)
+                logger.info(f"--- Learning Fact {i+1}/{len(facts)} ---")
                 
-                outputs = self.ttt_engine.model(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    output_hidden_states=True,
-                    return_dict=True,
+                optimizer = FastWeightOptimizer(
+                    parameters=adapter_params,
+                    optimizer_type=self.ttt_engine.optimizer_type,
+                    learning_rate=self.ttt_engine.learning_rate,
+                    gradient_clip_norm=self.ttt_engine.gradient_clip_norm,
                 )
                 
-                layer_idx = self.ttt_engine.extraction_layer
-                if layer_idx < 0:
-                    layer_idx = len(outputs.hidden_states) + layer_idx
-                h = outputs.hidden_states[layer_idx]
-                
-                projection = self.bottleneck(h, tau=self.bottleneck.tau)
-                loss_result = self.ttt_engine.ttt_loss_fn(
-                    logits=outputs.logits,
-                    input_ids=input_ids,
-                    projection_result=projection,
-                    attention_mask=attention_mask,
+                for epoch in range(epochs):
+                    inputs = self._tokenize(fact)
+                    input_ids = inputs["input_ids"].to(self.ttt_engine.device)
+                    attention_mask = inputs["attention_mask"].to(self.ttt_engine.device)
+                    
+                    outputs = self.ttt_engine.model(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        output_hidden_states=True,
+                        return_dict=True,
+                    )
+                    
+                    layer_idx = self.ttt_engine.extraction_layer
+                    if layer_idx < 0:
+                        layer_idx = len(outputs.hidden_states) + layer_idx
+                    h = outputs.hidden_states[layer_idx]
+                    
+                    projection = self.bottleneck(h, tau=self.bottleneck.tau)
+                    loss_result = self.ttt_engine.ttt_loss_fn(
+                        logits=outputs.logits,
+                        input_ids=input_ids,
+                        projection_result=projection,
+                        attention_mask=attention_mask,
+                    )
+                    
+                    # Custom Backward for OGP projection
+                    optimizer.optimizer.zero_grad()
+                    loss_result.total_loss.backward()
+                    
+                    for p in adapter_params:
+                        if p.grad is not None:
+                            g_flat = p.grad.data.view(-1)
+                            
+                            # 1. Project gradient orthogonally to past facts
+                            if len(subspaces[id(p)]) > 0:
+                                for v in subspaces[id(p)]:
+                                    proj = torch.dot(g_flat, v) * v
+                                    g_flat.sub_(proj)
+                            
+                            # 2. Capture the subspace direction on the final epoch
+                            if epoch == epochs - 1:
+                                norm = g_flat.norm()
+                                if norm > 1e-6:
+                                    subspaces[id(p)].append(g_flat.clone() / norm)
+                                    
+                            p.grad.data.copy_(g_flat.view(p.shape))
+                    
+                    if optimizer.gradient_clip_norm > 0:
+                        torch.nn.utils.clip_grad_norm_(adapter_params, optimizer.gradient_clip_norm)
+                    optimizer.optimizer.step()
+                    
+                    self.bottleneck.anneal_temperature()
+                    
+                logger.info(
+                    f"Fact {i+1} learned. "
+                    f"Final Loss: {loss_result.total_loss.item():.4f} | "
+                    f"Adapter Norm: {self.lora_injector.total_adapter_norm():.4f}"
                 )
-                
-                opt_metrics = optimizer.step(loss_result.total_loss)
-                total_loss += loss_result.total_loss.item()
-                self.bottleneck.anneal_temperature()
-                
-            avg_loss = total_loss / max(len(facts), 1)
-            logger.info(
-                f"Injection Epoch {epoch+1}/{epochs} | "
-                f"Avg Loss: {avg_loss:.4f} | "
-                f"Adapter Norm: {self.lora_injector.total_adapter_norm():.4f}"
+        else:
+            # Standard interleaved training
+            optimizer = FastWeightOptimizer(
+                parameters=adapter_params,
+                optimizer_type=self.ttt_engine.optimizer_type,
+                learning_rate=self.ttt_engine.learning_rate,
+                gradient_clip_norm=self.ttt_engine.gradient_clip_norm,
             )
+            for epoch in range(epochs):
+                total_loss = 0.0
+                for i, fact in enumerate(facts):
+                    inputs = self._tokenize(fact)
+                    input_ids = inputs["input_ids"].to(self.ttt_engine.device)
+                    attention_mask = inputs["attention_mask"].to(self.ttt_engine.device)
+                    
+                    outputs = self.ttt_engine.model(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        output_hidden_states=True,
+                        return_dict=True,
+                    )
+                    
+                    layer_idx = self.ttt_engine.extraction_layer
+                    if layer_idx < 0:
+                        layer_idx = len(outputs.hidden_states) + layer_idx
+                    h = outputs.hidden_states[layer_idx]
+                    
+                    projection = self.bottleneck(h, tau=self.bottleneck.tau)
+                    loss_result = self.ttt_engine.ttt_loss_fn(
+                        logits=outputs.logits,
+                        input_ids=input_ids,
+                        projection_result=projection,
+                        attention_mask=attention_mask,
+                    )
+                    
+                    opt_metrics = optimizer.step(loss_result.total_loss)
+                    total_loss += loss_result.total_loss.item()
+                    self.bottleneck.anneal_temperature()
+                    
+                avg_loss = total_loss / max(len(facts), 1)
+                logger.info(
+                    f"Injection Epoch {epoch+1}/{epochs} | "
+                    f"Avg Loss: {avg_loss:.4f} | "
+                    f"Adapter Norm: {self.lora_injector.total_adapter_norm():.4f}"
+                )
 
     # ------------------------------------------------------------------
     # Session management
