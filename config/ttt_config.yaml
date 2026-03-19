@@ -1,0 +1,75 @@
+# ============================================================
+# Neuro-Symbolic Test-Time Training Configuration
+# Optimized for T4 Colab (16 GB VRAM)
+# ============================================================
+
+model:
+  name: "unsloth/gemma-3-1b-it"
+  hidden_dim: 1152
+  num_layers: 26
+  num_attention_heads: 4          # KV heads
+  vocab_size: 262144
+  torch_dtype: "bfloat16"
+  device: "auto"                  # auto-detect CUDA / CPU
+  max_position_embeddings: 8192
+
+lora:
+  rank: 16
+  alpha: 32
+  target_modules:
+    - "q_proj"
+    - "v_proj"
+  target_layers: "all"           # "all" or list of layer indices [0, 1, ...]
+  dropout: 0.0
+  init_strategy: "kaiming_zero"  # Kaiming for A, zero for B
+
+bottleneck:
+  num_concepts: 128              # K — symbolic vocabulary size
+  tau_start: 1.0                 # Gumbel-Softmax initial temperature
+  tau_min: 0.1                   # minimum temperature
+  tau_anneal_rate: 0.9           # multiplicative decay per TTT step
+  hard_sampling: false           # if true, use straight-through estimator
+  codebook_normalize: true       # L2-normalize concept vectors
+  extraction_layer: -1           # which transformer layer to tap (-1 = last)
+
+ttt:
+  num_update_steps: 3            # N gradient steps at test time
+  learning_rate: 1.0e-4          # α for fast weight updates
+  optimizer: "adam"              # "adam" or "sgd"
+  gradient_clip_norm: 1.0
+  lambda_sym: 0.5               # weight for symbolic loss
+  epsilon: 0.01                  # hinge loss margin
+  mask_ratio: 0.15              # fraction of tokens masked for self-supervised loss
+
+symbolic:
+  default_rules:
+    - type: "type_consistency"
+      weight: 1.0
+      description: "Entity type must stay consistent across transitions"
+    - type: "temporal_order"
+      weight: 0.8
+      description: "Temporal predicates must follow monotonic ordering"
+    - type: "mutual_exclusion"
+      weight: 1.0
+      description: "Mutually exclusive concepts cannot co-occur"
+      pairs:
+        - ["alive", "dead"]
+        - ["present", "absent"]
+        - ["increase", "decrease"]
+  knowledge_graph:
+    max_entities: 1024
+    max_relations: 4096
+
+inference:
+  max_new_tokens: 512
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+  do_sample: true
+  repetition_penalty: 1.1
+  ttt_enabled: true              # set false for standard inference bypass
+
+logging:
+  level: "INFO"                  # DEBUG, INFO, WARNING, ERROR
+  format: "rich"                 # "rich" or "json"
+  log_file: null                 # set path for file logging
