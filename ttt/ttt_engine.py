@@ -192,10 +192,11 @@ class TTTEngine:
            d. Backprop into adapter params only
            e. Anneal Gumbel temperature
         """
-        # Reset for new session
-        self.lora_injector.reset_all()
-        self.bottleneck.reset_temperature()
-        self.knowledge_graph.clear()
+        # Reset for new session if memory is not persistent
+        if not self.config.get("ttt", {}).get("persistent_memory", False):
+            self.lora_injector.reset_all()
+            self.bottleneck.reset_temperature()
+            self.knowledge_graph.clear()
 
         # Build optimizer for adapter params only
         adapter_params = self.lora_injector.get_parameters()

@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import torch
 import yaml
@@ -310,13 +310,78 @@ class NeuroSymbolicTTTPipeline:
             final_adapter_norm=0.0,
         )
 
+    def inject_facts(self, facts: List[str], epochs: int = 3) -> None:
+        """
+        Inject a list of facts directly into the persistent parametric memory (LoRA).
+        This bypasses inference generation and purely runs the TTT objective over the facts.
+        """
+        assert self._initialized, "Call .initialize() first"
+        
+        logger.info(f"Injecting {len(facts)} facts into parametric memory over {epochs} epochs...")
+        
+        # Build optimizer for adapter params only
+        adapter_params = self.lora_injector.get_parameters()
+        for p in adapter_params:
+            p.requires_grad_(True)
+            
+        from ttt.optimizer import FastWeightOptimizer
+        optimizer = FastWeightOptimizer(
+            parameters=adapter_params,
+            optimizer_type=self.ttt_engine.optimizer_type,
+            learning_rate=self.ttt_engine.learning_rate,
+            gradient_clip_norm=self.ttt_engine.gradient_clip_norm,
+        )
+        
+        self.ttt_engine.model.eval()
+        self.bottleneck.train()
+        
+        for epoch in range(epochs):
+            total_loss = 0.0
+            for i, fact in enumerate(facts):
+                # Tokenize exactly as we would for normal inference/TTT
+                inputs = self._tokenize(fact)
+                input_ids = inputs["input_ids"].to(self.ttt_engine.device)
+                attention_mask = inputs["attention_mask"].to(self.ttt_engine.device)
+                
+                outputs = self.ttt_engine.model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    output_hidden_states=True,
+                    return_dict=True,
+                )
+                
+                layer_idx = self.ttt_engine.extraction_layer
+                if layer_idx < 0:
+                    layer_idx = len(outputs.hidden_states) + layer_idx
+                h = outputs.hidden_states[layer_idx]
+                
+                projection = self.bottleneck(h, tau=self.bottleneck.tau)
+                loss_result = self.ttt_engine.ttt_loss_fn(
+                    logits=outputs.logits,
+                    input_ids=input_ids,
+                    projection_result=projection,
+                    attention_mask=attention_mask,
+                )
+                
+                opt_metrics = optimizer.step(loss_result.total_loss)
+                total_loss += loss_result.total_loss.item()
+                self.bottleneck.anneal_temperature()
+                
+            avg_loss = total_loss / max(len(facts), 1)
+            logger.info(
+                f"Injection Epoch {epoch+1}/{epochs} | "
+                f"Avg Loss: {avg_loss:.4f} | "
+                f"Adapter Norm: {self.lora_injector.total_adapter_norm():.4f}"
+            )
+
     # ------------------------------------------------------------------
     # Session management
     # ------------------------------------------------------------------
-    def reset_session(self) -> None:
-        """Discard TTT adaptations and reset to base model behavior."""
+    def reset_session(self, force: bool = False) -> None:
+        """Discard TTT adaptations. Force overrides persistent_memory."""
         if self.ttt_engine:
-            self.ttt_engine.discard_session()
+            if force or not self.config.get("ttt", {}).get("persistent_memory", False):
+                self.ttt_engine.discard_session()
 
     def save_session(self, path: str) -> None:
         """Save current adapter state for offline consolidation."""
