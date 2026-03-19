@@ -56,6 +56,15 @@ symbolic:
         - ["alive", "dead"]
         - ["present", "absent"]
         - ["increase", "decrease"]
+    - type: "clinical_contraindication"
+      weight: 2.0
+      pairs:
+        - ["hypertension", "nsaids"]
+        - ["asthma", "beta_blockers"]
+        - ["ulcer", "aspirin"]
+    - type: "physics_conservation"
+      weight: 1.5
+      concepts: ["total_energy", "mass", "momentum"]
   knowledge_graph:
     max_entities: 1024
     max_relations: 4096

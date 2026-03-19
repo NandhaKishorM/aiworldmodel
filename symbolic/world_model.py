@@ -233,6 +233,65 @@ class MutualExclusionRule(Rule):
         return violation * self.weight
 
 
+class ClinicalContraindicationRule(Rule):
+    """
+    Medical logic: If Symptom/Condition A is present, Treatment B is contraindicated.
+    """
+    def __init__(
+        self,
+        contraindication_pairs: Optional[List[Tuple[int, int]]] = None,
+        weight: float = 2.0,
+    ):
+        super().__init__(weight=weight, name="ClinicalContraindication")
+        self.pairs = contraindication_pairs or []
+
+    def evaluate(self, state_t: SymbolicState, state_t1: SymbolicState) -> float:
+        for cond, treat in self.pairs:
+            if state_t.concept_id == cond and state_t1.concept_id == treat:
+                return self.weight
+        return 0.0
+
+    def evaluate_soft(self, z_t: torch.Tensor, z_t1: torch.Tensor) -> torch.Tensor:
+        violation = torch.tensor(0.0, device=z_t.device, dtype=z_t.dtype)
+        for cond, treat in self.pairs:
+            K = z_t.shape[-1]
+            if cond < K and treat < K:
+                # P(condition at t) * P(treatment at t+1)
+                violation = violation + (z_t[..., cond] * z_t1[..., treat])
+        return violation * self.weight
+
+
+class PhysicsConservationRule(Rule):
+    """
+    Physics logic: Certain continuous quantities (mapped to concepts) must be conserved.
+    Penalizes states that suddenly create or destroy probability mass for these concepts.
+    """
+    def __init__(
+        self,
+        conserved_concepts: Optional[List[int]] = None,
+        weight: float = 1.5,
+    ):
+        super().__init__(weight=weight, name="PhysicsConservation")
+        self.conserved = conserved_concepts or []
+
+    def evaluate(self, state_t: SymbolicState, state_t1: SymbolicState) -> float:
+        v = 0.0
+        for c in self.conserved:
+            c_t = 1.0 if state_t.concept_id == c else 0.0
+            c_t1 = 1.0 if state_t1.concept_id == c else 0.0
+            v += abs(c_t - c_t1)
+        return v * self.weight
+
+    def evaluate_soft(self, z_t: torch.Tensor, z_t1: torch.Tensor) -> torch.Tensor:
+        violation = torch.tensor(0.0, device=z_t.device, dtype=z_t.dtype)
+        for c in self.conserved:
+            K = z_t.shape[-1]
+            if c < K:
+                # Penalty for absolute change in probability mass of a conserved concept
+                violation = violation + torch.abs(z_t[..., c] - z_t1[..., c])
+        return violation * self.weight
+
+
 # ======================================================================
 # Symbolic World Model (Rule Registry)
 # ======================================================================
@@ -344,6 +403,28 @@ class SymbolicWorldModel:
                             ))
                 model.add_rule(MutualExclusionRule(
                     exclusion_pairs=index_pairs, weight=weight
+                ))
+            elif rule_type == "clinical_contraindication":
+                pairs = rule_cfg.get("pairs", [])
+                index_pairs = []
+                for pair in pairs:
+                    if isinstance(pair, (list, tuple)) and len(pair) == 2:
+                        idx_pair = (
+                            pair[0] if isinstance(pair[0], int) else hash(pair[0]) % 128,
+                            pair[1] if isinstance(pair[1], int) else hash(pair[1]) % 128,
+                        )
+                        index_pairs.append(idx_pair)
+                model.add_rule(ClinicalContraindicationRule(
+                    contraindication_pairs=index_pairs, weight=weight
+                ))
+            elif rule_type == "physics_conservation":
+                concepts = rule_cfg.get("concepts", [])
+                index_concepts = [
+                    c if isinstance(c, int) else hash(c) % 128 
+                    for c in concepts
+                ]
+                model.add_rule(PhysicsConservationRule(
+                    conserved_concepts=index_concepts, weight=weight
                 ))
             else:
                 logger.warning(f"Unknown rule type: {rule_type}, skipping")
