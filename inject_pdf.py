@@ -58,7 +58,10 @@ def main():
     questions = [
         "What is the name of the submarine target in Operation Nightfall?",
         "What is the blast door override sequence?",
-        "Where is the extraction zone?"
+        "Where is the extraction zone?",
+        "Who is the Commander for Operation Nightfall?",
+        "What is the primary payload of the submarine?",
+        "What is the password for the extraction pilot?"
     ]
     
     # 3. Test base model memory BEFORE injection
