@@ -127,7 +127,14 @@ class NeuroSymbolicTTTPipeline:
 
         device = next(self._model.parameters()).device
         dtype = next(self._model.parameters()).dtype
-        hidden_dim = self._model.config.hidden_size
+        
+        # Handle different config structures (e.g., Gemma3 uses text_config)
+        if hasattr(self._model.config, "hidden_size"):
+            hidden_dim = self._model.config.hidden_size
+        elif hasattr(self._model.config, "text_config") and hasattr(self._model.config.text_config, "hidden_size"):
+            hidden_dim = self._model.config.text_config.hidden_size
+        else:
+            raise ValueError("Could not determine hidden_size from model config.")
 
         # 2. Inject LoRA adapters
         target_layers = lora_cfg.get("target_layers", "all")
