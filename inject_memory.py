@@ -21,11 +21,11 @@ def main():
     # Temporarily set persistent memory to True for this script
     pipeline.config["ttt"]["persistent_memory"] = True
     
-    # Facts to inject into parametric memory
+    # Facts to inject into parametric memory (Formatted as QA for autoregressive memorization)
     secret_facts = [
-        "The operation code for the Quantum Core is 'AETHELRED-992'.",
-        "Agent Viper's true identity is Dr. Aris Thorne.",
-        "The hidden cache is buried beneath the old oak tree at coordinates 45.9, -12.3."
+        "Q: What is the operation code for the Quantum Core?\nA: AETHELRED-992",
+        "Q: Who is Agent Viper really?\nA: Dr. Aris Thorne",
+        "Q: Where exactly is the hidden cache located?\nA: The hidden cache is buried beneath the old oak tree at coordinates 45.9, -12.3."
     ]
     
     questions = [
@@ -45,7 +45,7 @@ def main():
     # 3. Inject facts into LoRA parametric memory
     logger.info("\n--- Injecting Facts into Parametric Memory ---")
     start_time = time.perf_counter()
-    pipeline.inject_facts(secret_facts, epochs=15)
+    pipeline.inject_facts(secret_facts, epochs=100)
     elapsed = time.perf_counter() - start_time
     logger.info(f"Injection complete in {elapsed:.2f} seconds.")
     
