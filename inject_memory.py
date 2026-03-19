@@ -43,9 +43,9 @@ def main():
         logger.info(f"Base Output: {res.output_text.strip()}\n")
         
     # 3. Inject facts into LoRA parametric memory
-    logger.info("\n--- Injecting Facts into Parametric Memory (OGP) ---")
+    logger.info("\n--- Injecting Facts into Parametric Memory ---")
     start_time = time.perf_counter()
-    pipeline.inject_facts(secret_facts, epochs=100, use_ogp=True)
+    pipeline.inject_facts(secret_facts, epochs=100)
     elapsed = time.perf_counter() - start_time
     logger.info(f"Injection complete in {elapsed:.2f} seconds.")
     

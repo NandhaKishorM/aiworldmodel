@@ -20,3 +20,7 @@ rich>=13.0.0
 
 # Typing
 typing-extensions>=4.8.0
+
+# PDF & RAG testing
+pypdf>=4.0.0
+reportlab>=4.0.0
