@@ -4,7 +4,7 @@
 # ============================================================
 
 model:
-  name: "unsloth/gemma-3-1b-it"
+  name: "unsloth/gemma-3-4b-it"      # frozen base modelim: 1152
   hidden_dim: 1152
   num_layers: 26
   num_attention_heads: 4          # KV heads
